@@ -1,0 +1,6 @@
+{
+  "name": "Vektor Rajzoló",
+  "description": "Androidra optimalizált nyomásérzékeny vektoros rajzoló és frame animáció készítő SVG mentéssel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
