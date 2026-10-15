@@ -1,6 +1,6 @@
 {
   "name": "Vektor Rajzoló",
-  "description": "Androidra optimalizált nyomásérzékeny vektoros rajzoló és frame animáció készítő SVG mentéssel.",
+  "description": "Professzionális, Androidra és táblagépekre optimalizált nyomásérzékeny vektoros 2D animáció készítő, Google Gemma nyílt súlyú AI paletta generátorral, teljes képernyős vászonnal, ki/bekapcsolható kezelőfelülettel, valamint átlátszó háttérrel rendelkező SVG és PNG mentési lehetőséggel.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

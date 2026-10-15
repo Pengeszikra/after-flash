@@ -11,13 +11,21 @@ export interface VectorStroke {
   points: [number, number, number][]; // [x, y, pressure]
   pathData: string;
   baseSize: number;
+  color: string;
+  layer?: 'draw' | 'color';
 }
+
+export type HistoryStep =
+  | { type: 'add'; stroke: VectorStroke }
+  | { type: 'remove'; strokes: VectorStroke[] };
 
 export interface Frame {
   id: string;
   name: string;
   strokes: VectorStroke[];
   undoStack: VectorStroke[];
+  history?: HistoryStep[];
+  future?: HistoryStep[];
 }
 
 /**
@@ -75,28 +83,43 @@ export function generateStrokePath(
 }
 
 /**
- * Exports a frame to a clean, standard SVG string
+ * Exports a frame to a clean, standard SVG string with 2 layers (Color bottom, Draw top)
  */
 export function frameToSvgString(
   frame: Frame,
   width: number = 1920,
   height: number = 1080,
-  includeBackground: boolean = true
+  includeBackground: boolean = true,
+  backgroundColor: string = '#ffffff'
 ): string {
   const bg = includeBackground
-    ? `<rect width="${width}" height="${height}" fill="#ffffff" />\n  `
+    ? `<rect width="${width}" height="${height}" fill="${backgroundColor}" />\n  `
     : '';
 
-  const paths = frame.strokes
+  // Bottom layer: color strokes
+  const colorStrokes = frame.strokes.filter((s) => s.layer === 'color');
+  const colorPaths = colorStrokes
     .map(
       (stroke) =>
-        `<path d="${stroke.pathData}" fill="#000000" stroke="none" fill-rule="nonzero" />`
+        `<path d="${stroke.pathData}" fill="${stroke.color || '#000000'}" stroke="none" fill-rule="nonzero" data-layer="color" />`
     )
     .join('\n  ');
 
+  // Top layer: draw strokes (default)
+  const drawStrokes = frame.strokes.filter((s) => s.layer !== 'color');
+  const drawPaths = drawStrokes
+    .map(
+      (stroke) =>
+        `<path d="${stroke.pathData}" fill="${stroke.color || '#000000'}" stroke="none" fill-rule="nonzero" data-layer="draw" />`
+    )
+    .join('\n  ');
+
+  const colorGroup = colorPaths ? `<g id="layer-color">\n  ${colorPaths}\n  </g>\n  ` : '';
+  const drawGroup = drawPaths ? `<g id="layer-draw">\n  ${drawPaths}\n  </g>` : '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
-  ${bg}${paths}
+  ${bg}${colorGroup}${drawGroup}
 </svg>`;
 }
 
@@ -109,6 +132,111 @@ export function downloadSvg(svgContent: string, fileName: string): void {
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName.endsWith('.svg') ? fileName : `${fileName}.svg`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Renders SVG content to an offscreen raster canvas and triggers a PNG download
+ * Supports transparent background (alpha channel preserved)
+ */
+export async function downloadPng(
+  svgContent: string,
+  width: number,
+  height: number,
+  fileName: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('Unable to create 2d canvas context');
+        }
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(url);
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error('Failed to create PNG blob'));
+            return;
+          }
+          const pngUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = pngUrl;
+          link.download = fileName.endsWith('.png') ? fileName : `${fileName}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(pngUrl);
+          resolve();
+        }, 'image/png');
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    };
+
+    img.onerror = (err) => {
+      URL.revokeObjectURL(url);
+      reject(err);
+    };
+
+    img.src = url;
+  });
+}
+
+/**
+ * Calculates perceived luminance (sRGB standard) of a 6-digit hex color (0 to 1)
+ */
+export function getHexLuminance(hex: string): number {
+  const clean = hex.replace('#', '').trim();
+  if (clean.length !== 6) return 0.5;
+  const r = parseInt(clean.substring(0, 2), 16) / 255;
+  const g = parseInt(clean.substring(2, 4), 16) / 255;
+  const b = parseInt(clean.substring(4, 6), 16) / 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/**
+ * Extracts light/near-light colors from a palette (luminance >= 0.70)
+ */
+export function getLightColorsFromPalette(palette: string[]): string[] {
+  const lightColors = palette.filter((c) => getHexLuminance(c) >= 0.70);
+  if (lightColors.length > 0) return lightColors;
+  // Fallback to top brightest colors
+  return [...palette].sort((a, b) => getHexLuminance(b) - getHexLuminance(a)).slice(0, 8);
+}
+
+/**
+ * Selects a random light color from the given palette for starting canvas background
+ */
+export function getRandomLightColor(palette: string[]): string {
+  const lights = getLightColorsFromPalette(palette);
+  if (lights.length === 0) return '#fdfbf7';
+  return lights[Math.floor(Math.random() * lights.length)];
+}
+
+/**
+ * Triggers a browser download for a JSON data object
+ */
+export function downloadJson(data: any, fileName: string): void {
+  const jsonString = JSON.stringify(data, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
